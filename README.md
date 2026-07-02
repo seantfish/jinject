@@ -81,4 +81,4 @@ get_meta = "my_asset_package.core:metadata_combiner"
 
 * World Containers: ROS 2 packages define overall Gazebo world environments as top-level Jinja files.
 * Asset Containers: Independent hardware/robot packages bundle parameterized SDF templates alongside python procedural helpers (e.g., generating dynamic collision hulls, specific wheel configurations, or customized meshes).
-
+ 
