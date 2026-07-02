@@ -66,9 +66,16 @@ def main() -> None:
         lstrip_blocks=True
     )
     
-    # Track core extensions
+    # Track core extensions and strictly namespace them by their actual package name
     for ep in importlib.metadata.entry_points(group="jinject.plugins"):
-        env.globals[ep.name] = ep.load()
+        pkg_name = ep.dist.name  # Extracts the source package name, e.g., 'theme_core'
+        
+        # Ensure the package has its own sub-dictionary namespace in globals
+        if pkg_name not in env.globals:
+            env.globals[pkg_name] = {}
+            
+        # Bind the function to its declared entry point key inside that package block
+        env.globals[pkg_name][ep.name] = ep.load()
 
     template_filename = os.path.basename(args.input)
     template = env.get_template(template_filename)
