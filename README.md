@@ -1,46 +1,50 @@
 # jinject
 
-`jinject` is an agnostic Jinja2 layout preprocessor designed to decouple templates from hardcoded workspace paths and dynamically inject Python utility functions at runtime via system entry points.
+`jinject` is a Jinja2 layout preprocessor designed to enable inclusion of templates with Python packages and dynamic injection of Python utility functions at runtime.
 
+## Installation
 
-### 1. Workspace Path Discovery
-When target layout files are processed, `jinject` walks up the directory tree to discover relevant asset footprints. It evaluates both the parent context and immediate subdirectories to automatically append folders named `templates/` to the Jinja search path. This allows modules to share layout pieces or macros across separate packages without absolute tracking:
+In order to use `jinject` with compatible installed system packages, you can run:
+```
+uv tool install ./jinject
+```
+This works well for packages installed to your base global environment (such as via `apt`, `pip --break-system-packages`, or a sourced ROS 2 workspace).
 
-```text
-Current Workspace Root/
-├── package_alpha/
-│   └── templates/
-│       └── utils.jinja       <-- Auto-discovered macro module
-└── package_beta/
-    └── layout.jinja          <-- Targets this file; imports 'utils.jinja' directly
+## Creating Jinjectable Packages
+
+Packages can expose both templates and executable Python helper macros directly to the `jinject` processor via standard entry points.
+
+### Registering template directories
+
+Templates must reside inside your Python package directory structure (e.g., src/my_asset_package/templates/) and added as a `"jinject.templates"` entry-point. Here is an example of a `pyproject.toml`:
+
+```
+[project]
+name = "my_asset_package"
+version = "1.0.0"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.entry-points."jinject.templates"]
+# Maps the prefix "core_layouts/" to the package's templates/ folder
+core_layouts = "my_asset_package:templates"
+
+# Ensure Hatchling sweeps up non-Python (e.g. *.jinja) files
+[tool.hatch.build.targets.wheel]
+packages = ["src/my_asset_package"]
+
+Downstream files can now import these assets explicitly using the defined namespace key:
+{% import 'core_layouts/base.html' as theme %}
 ```
 
-### 2. Runtime Extension Injection
-Instead of forcing asset maintainers to bake helper logic directly into core template wrappers, `jinject` utilizes python package metadata to discover utilities. Any package exposing entry points under the `jinject.plugins` group is checked at runtime.
 
----
-
-## Installation & Environment Set Up
-
-Manage local dependencies and isolate development footprints using `uv`.
-
-### Development Boot Loop
-
-```bash
-# Clone and enter repository
-git clone https://github.com/seantfish/jinja.git
+### Registering functions
+Functions must behave as pure interfaces—accepting standard primitives (str, int, float) and returning structures Jinja can cleanly process or unpack (such as a generic dict or list or string).
 ```
+# located inside: src/my_asset_package/core.py
 
-
-## Creating Dynamic Plugins
-
-To register a reusable library function with `jinject`, expose an entry point under the `jinject.plugins` namespace in your asset container package.
-
-### 1. Define the Python Logic
-Functions must behave as pure interfaces—accepting standard primitives (`str`, `int`, `float`) and returning structures Jinja can cleanly unpack (such as a generic `dict`).
-
-```python
-# located inside: my_asset_package/core.py
 def metadata_combiner(prefix: str, count: int) -> dict:
     """Computes layout tag strings and parity flags."""
     return {
@@ -48,16 +52,22 @@ def metadata_combiner(prefix: str, count: int) -> dict:
         "is_even": count % 2 == 0
     }
 ```
+Map this function path under the jinject.plugins entry point namespace inside your pyproject.toml:
+```
+[project.entry-points."jinject.plugins"]
+get_meta = "my_asset_package.core:metadata_combiner"
+```
 
-### 2. Register the Entry Point
+#### Register the Entry Point
 Map the python method path within the distribution `pyproject.toml` configuration block:
 
 ```toml
 [project.entry-points."jinject.plugins"]
 get_meta = "my_asset_package.core:metadata_combiner"
 ```
+### Using functions in the template
 
-Once installed into the target environment workspace (`uv pip install -e .`), `jinject` automatically wires `get_meta()` into the global execution block, making it instantly executable within layout templates:
+`jinject` automatically wires `get_meta()` into the global execution block, making it instantly executable within layout templates:
 
 ```text
 {# Inside template context #}
@@ -65,16 +75,10 @@ Once installed into the target environment workspace (`uv pip install -e .`), `j
 <div id="{{ layout_state.id_tag }}">Parity Event Status: {{ layout_state.is_even }}</div>
 ```
 
----
+## Background
 
-## Test Verification Routine
+`jinject` was originally created to generate highly parameterized simulation environments for Gazebo. The workflow maps directly to a modular robotic ecosystem:
 
-The testing harness leverages mocked entry configurations and dynamic isolated filesystem allocations to verify engine parameters without mutating system environments.
-
-```bash
-# Execute localized system tests 
-uv run pytest -v
-```
-
-### Fault Isolation Guarantees
-The internal plugin ingestion matrix encapsulates individual package initialization. If a corrupted or broken plugin raises an `ImportError` or encounters execution failures, `jinject` logs a warning context block, isolates the fault to preserve system stability, and finishes processing valid dependencies.
+* World Containers: ROS 2 packages define overall Gazebo world environments as top-level Jinja files.
+* Asset Containers: Independent hardware/robot packages bundle parameterized SDF templates alongside python procedural helpers (e.g., generating dynamic collision hulls, specific wheel configurations, or customized meshes).
+ 
