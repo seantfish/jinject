@@ -8,36 +8,54 @@ In order to use `jinject` with compatible installed system packages, you can run
 ```
 uv tool install ./jinject
 ```
-This works well for packages installed with `--break-system-packages` or otherwise added to your base path (such as with a `source` command).
-
+This works well for packages installed to your base global environment (such as via `apt`, `pip --break-system-packages`, or a sourced ROS 2 workspace).
 
 ## Creating Jinjectable Packages
 
-To register a reusable library function with `jinject`, expose an entry point under the `jinject.plugins` namespace in your asset container package.
+Packages can expose both templates and executable Python helper macros directly to the `jinject` processor via standard entry points.
 
 ### Registering template directories
-Templates must be in a directory declared as an entry point and configured to be bundled in the package.
 
-```toml
+Templates must reside inside your Python package directory structure (e.g., src/my_asset_package/templates/) and added as a `"jinject.templates"` entry-point. Here is an example of a `pyproject.toml`:
+
+```
+[project]
+name = "my_asset_package"
+version = "1.0.0"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project.entry-points."jinject.templates"]
+# Maps the prefix "core_layouts/" to the package's templates/ folder
 core_layouts = "my_asset_package:templates"
 
-# Hatchling configuration for bundling non-Python assets
+# Ensure Hatchling sweeps up non-Python (e.g. *.jinja) files
 [tool.hatch.build.targets.wheel]
 packages = ["src/my_asset_package"]
+
+Downstream files can now import these assets explicitly using the defined namespace key:
+{% import 'core_layouts/base.html' as theme %}
 ```
 
-### Registering functions
-Functions must behave as pure interfaces—accepting standard primitives (`str`, `int`, `float`) and returning structures Jinja can cleanly unpack (such as a generic `dict`).
 
-```python
-# located inside: my_asset_package/core.py
+### Registering functions
+Functions must behave as pure interfaces—accepting standard primitives (str, int, float) and returning structures Jinja can cleanly process or unpack (such as a generic dict or list or string).
+```
+# located inside: src/my_asset_package/core.py
+
 def metadata_combiner(prefix: str, count: int) -> dict:
     """Computes layout tag strings and parity flags."""
     return {
         "id_tag": f"{prefix}_{count}",
         "is_even": count % 2 == 0
     }
+```
+Map this function path under the jinject.plugins entry point namespace inside your pyproject.toml:
+```
+[project.entry-points."jinject.plugins"]
+get_meta = "my_asset_package.core:metadata_combiner"
 ```
 
 #### Register the Entry Point
@@ -47,6 +65,7 @@ Map the python method path within the distribution `pyproject.toml` configuratio
 [project.entry-points."jinject.plugins"]
 get_meta = "my_asset_package.core:metadata_combiner"
 ```
+### Using functions in the template
 
 `jinject` automatically wires `get_meta()` into the global execution block, making it instantly executable within layout templates:
 
@@ -56,8 +75,10 @@ get_meta = "my_asset_package.core:metadata_combiner"
 <div id="{{ layout_state.id_tag }}">Parity Event Status: {{ layout_state.is_even }}</div>
 ```
 
-
 ## Background
 
-This package was initially created to enable the creation of parameterized worlds for Gazebo. The workflow involves creating a ROS 2 package for Gazebo worlds defined as jinja templates, which themselves contain references to jinja macros from other packages which may define assets. The asset packages contain SDF jinja templates for the assets themselves, capable of taking in parameters and passing them into functions within the package, which could further enable parameterization by for example generating customized meshes.
+`jinject` was originally created to generate highly parameterized simulation environments for Gazebo. The workflow maps directly to a modular robotic ecosystem:
+
+* World Containers: ROS 2 packages define overall Gazebo world environments as top-level Jinja files.
+* Asset Containers: Independent hardware/robot packages bundle parameterized SDF templates alongside python procedural helpers (e.g., generating dynamic collision hulls, specific wheel configurations, or customized meshes).
 
