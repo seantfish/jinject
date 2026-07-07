@@ -75,6 +75,46 @@ get_meta = "my_asset_package.core:metadata_combiner"
 <div id="{{ layout_state.id_tag }}">Parity Event Status: {{ layout_state.is_even }}</div>
 ```
 
+## Shell Command Execution
+
+`jinject` provides built-in `shell()` and `shell_json()` functions available in all templates. These allow calling external command-line tools during template rendering — no entry points required.
+
+### `shell(*args, **kwargs)` → `str`
+
+Executes a command and returns its stdout as a stripped string. Raises on non-zero exit.
+
+Positional arguments form the command tokens. Keyword arguments are appended as `--key=value` flags (underscores in kwarg names become hyphens). Boolean `True` kwargs emit the flag alone; `False` kwargs are omitted.
+
+```jinja
+{# Simple command #}
+{{ shell("echo", "hello") }}
+
+{# Command with flags via kwargs #}
+{% set version = shell("uv", "run", "my_tool", config="/etc/app.yaml") %}
+{# Equivalent to: uv run my_tool --config=/etc/app.yaml #}
+
+{# Boolean flags #}
+{{ shell("ros2", "param", "get", "/node", "use_sim_time", verbose=True) }}
+{# Equivalent to: ros2 param get /node use_sim_time --verbose #}
+```
+
+### `shell_json(*args, **kwargs)` → `dict | list | ...`
+
+Same calling convention as `shell()`, but parses stdout as JSON and returns the resulting Python object for structured access in templates.
+
+```jinja
+{% set info = shell_json("uv", "run", "get_sensor_config", output_format="json") %}
+<sensor name="{{ info.name }}" rate="{{ info.rate_hz }}" />
+```
+
+### Error Handling
+
+- **Non-zero exit code:** Raises `subprocess.CalledProcessError`, halting template rendering with a clear error message.
+- **Invalid JSON** (for `shell_json`): Raises `json.JSONDecodeError`.
+- **Command not found:** Raises `FileNotFoundError`.
+
+These are intentionally loud failures — jinject is a build-time tool, and silent corruption is worse than a failed build.
+
 ## Template Discovery via Environment Variable
 
 For packages that cannot use Python entry points (e.g., CMake/Meson packages installing Jinja templates as static files), `jinject` supports the `JINJECT_TEMPLATE_PATH` environment variable as a first-class template discovery mechanism.

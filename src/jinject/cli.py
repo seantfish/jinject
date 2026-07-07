@@ -1,11 +1,66 @@
 import argparse
+import json
 import logging
 import os
 import importlib.metadata
 import importlib.resources
+import subprocess
 import jinja2
 
 logger = logging.getLogger(__name__)
+
+
+def _build_command_args(args: tuple, kwargs: dict) -> list[str]:
+    """Convert positional and keyword arguments into a flat command list.
+
+    Positional args become command tokens in order.
+    Keyword args are appended as --key=value flags (or --key for boolean True).
+    Boolean False kwargs are omitted entirely.
+    """
+    cmd: list[str] = [str(a) for a in args]
+    for key, value in kwargs.items():
+        flag = f"--{key.replace('_', '-')}"
+        if isinstance(value, bool):
+            if value:
+                cmd.append(flag)
+        else:
+            cmd.append(f"{flag}={value}")
+    return cmd
+
+
+def shell(*args: str, **kwargs: str) -> str:
+    """Execute a command and return its stdout as a stripped string.
+
+    Positional arguments form the command tokens. Keyword arguments are
+    appended as --key=value flags (underscores become hyphens).
+
+    Raises subprocess.CalledProcessError on non-zero exit.
+
+    Examples (from Jinja):
+        {{ shell("echo", "hello") }}
+        {{ shell("uv", "run", "my_tool", config="/path/to/cfg") }}
+    """
+    cmd = _build_command_args(args, kwargs)
+    logger.debug("shell: executing %s", cmd)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    return result.stdout.strip()
+
+
+def shell_json(*args: str, **kwargs: str):
+    """Execute a command and parse its stdout as JSON.
+
+    Same argument conventions as shell(). Returns the parsed Python object
+    (dict, list, str, etc.) for use in templates.
+
+    Raises subprocess.CalledProcessError on non-zero exit.
+    Raises json.JSONDecodeError if stdout is not valid JSON.
+
+    Examples (from Jinja):
+        {% set data = shell_json("uv", "run", "my_tool", output="json") %}
+        {{ data.some_field }}
+    """
+    raw = shell(*args, **kwargs)
+    return json.loads(raw)
 
 
 class PackageTemplateLoader(jinja2.BaseLoader):
@@ -127,6 +182,10 @@ def main() -> None:
         trim_blocks=True,
         lstrip_blocks=True
     )
+
+    # Register built-in shell execution globals
+    env.globals["shell"] = shell
+    env.globals["shell_json"] = shell_json
     
     # Track core extensions and strictly namespace them by their actual package name
     for ep in importlib.metadata.entry_points(group="jinject.plugins"):
