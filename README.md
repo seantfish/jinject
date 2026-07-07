@@ -71,7 +71,7 @@ get_meta = "my_asset_package.core:metadata_combiner"
 
 ```text
 {# Inside template context #}
-{% set layout_state = get_meta("node", 4) %}
+{% set layout_state = my_asset_package.get_meta("node", 4) %}
 <div id="{{ layout_state.id_tag }}">Parity Event Status: {{ layout_state.is_even }}</div>
 ```
 
