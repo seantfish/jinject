@@ -1,8 +1,12 @@
 import argparse
+import logging
 import os
 import importlib.metadata
 import importlib.resources
 import jinja2
+
+logger = logging.getLogger(__name__)
+
 
 class PackageTemplateLoader(jinja2.BaseLoader):
     """Dynamically routes template lookup calls directly to entry point packages."""
@@ -37,6 +41,59 @@ class PackageTemplateLoader(jinja2.BaseLoader):
         except Exception:
             raise jinja2.TemplateNotFound(template)
 
+
+def _build_env_path_loader() -> jinja2.BaseLoader | None:
+    """Build a PrefixLoader from the JINJECT_TEMPLATE_PATH environment variable.
+
+    Each entry on the path (separated by os.pathsep) takes one of two forms:
+
+      namespace=/absolute/path/to/templates
+        Registers the directory under the given namespace explicitly.
+
+      /absolute/path/to/directory
+        Uses the directory's basename as the namespace.
+
+    Returns None if the variable is unset/empty or yields no valid directories.
+    """
+    raw = os.environ.get("JINJECT_TEMPLATE_PATH", "")
+    if not raw:
+        return None
+
+    mapping: dict[str, jinja2.FileSystemLoader] = {}
+
+    for entry in raw.split(os.pathsep):
+        entry = entry.strip()
+        if not entry:
+            continue
+
+        # Determine namespace and directory
+        if "=" in entry:
+            namespace, _, directory = entry.partition("=")
+            namespace = namespace.strip()
+            directory = directory.strip()
+        else:
+            directory = entry
+            namespace = os.path.basename(directory.rstrip(os.sep))
+
+        if not namespace:
+            logger.debug("Skipping JINJECT_TEMPLATE_PATH entry with empty namespace: %s", entry)
+            continue
+
+        if not os.path.isdir(directory):
+            logger.debug("Skipping JINJECT_TEMPLATE_PATH entry (not a directory): %s", directory)
+            continue
+
+        # Later entries for the same namespace are ignored (first wins)
+        if namespace not in mapping:
+            mapping[namespace] = jinja2.FileSystemLoader(directory)
+            logger.debug("JINJECT_TEMPLATE_PATH: registered namespace '%s' -> %s", namespace, directory)
+
+    if not mapping:
+        return None
+
+    return jinja2.PrefixLoader(mapping, delimiter="/")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Explicit Entry-Point Jinja Preprocessor")
     parser.add_argument("input", help="Path to the primary local Jinja layout template.")
@@ -56,12 +113,17 @@ def main() -> None:
     # Absolute path execution bound entirely to immediate compilation target directory
     local_dir = os.path.dirname(os.path.abspath(args.input))
     
-    # Establish engine setup: Fall back to installed entry-point spaces only
+    # Build loader chain: local files > env-path namespaces > entry-point packages
+    loaders: list[jinja2.BaseLoader] = [jinja2.FileSystemLoader(local_dir)]
+
+    env_loader = _build_env_path_loader()
+    if env_loader is not None:
+        loaders.append(env_loader)
+
+    loaders.append(PackageTemplateLoader())
+
     env = jinja2.Environment(
-        loader=jinja2.ChoiceLoader([
-            jinja2.FileSystemLoader(local_dir),
-            PackageTemplateLoader()
-        ]),
+        loader=jinja2.ChoiceLoader(loaders),
         trim_blocks=True,
         lstrip_blocks=True
     )

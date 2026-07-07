@@ -75,6 +75,58 @@ get_meta = "my_asset_package.core:metadata_combiner"
 <div id="{{ layout_state.id_tag }}">Parity Event Status: {{ layout_state.is_even }}</div>
 ```
 
+## Template Discovery via Environment Variable
+
+For packages that cannot use Python entry points (e.g., CMake/Meson packages installing Jinja templates as static files), `jinject` supports the `JINJECT_TEMPLATE_PATH` environment variable as a first-class template discovery mechanism.
+
+### Format
+
+`JINJECT_TEMPLATE_PATH` is a path-separator-delimited list (`:` on Unix, `;` on Windows) of entries. Each entry takes one of two forms:
+
+```bash
+# Explicit namespace mapping
+JINJECT_TEMPLATE_PATH="calibration_description=/opt/share/calibration_description/templates"
+
+# Basename inference (directory basename becomes the namespace)
+JINJECT_TEMPLATE_PATH="/opt/share/calibration_description"
+# → namespace = "calibration_description"
+```
+
+Multiple entries can be combined:
+
+```bash
+export JINJECT_TEMPLATE_PATH="calibration_description=/opt/share/calibration_description/templates:/opt/share/robot_description"
+```
+
+### Behavior
+
+- Each entry registers a directory under a namespace. Templates are then resolvable as `namespace/path/to/template.jinja`.
+- Non-existent directories are silently skipped.
+- If the same namespace appears multiple times, the **first** entry wins.
+- **Precedence:** Environment variable paths are searched **before** entry-point-registered packages. If both provide the same namespace, the env var wins.
+- Entry points remain fully supported — this is additive.
+
+### Example: CMake-Installed Templates
+
+A CMake package installs templates to a known prefix:
+
+```cmake
+install(DIRECTORY templates/ DESTINATION share/${PROJECT_NAME}/templates)
+```
+
+At runtime, set the path to make them discoverable:
+
+```bash
+export JINJECT_TEMPLATE_PATH="calibration_description=/opt/ros/install/share/calibration_description/templates"
+```
+
+Then any Jinja template can import from that namespace:
+
+```jinja
+{% from "calibration_description/velo2cam.sdf.jinja" import velo2cam_model %}
+{{ velo2cam_model("lidar_front") }}
+```
+
 ## Background
 
 `jinject` was originally created to generate highly parameterized simulation environments for Gazebo. The workflow maps directly to a modular robotic ecosystem:

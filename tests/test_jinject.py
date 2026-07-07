@@ -4,6 +4,8 @@ import pytest
 import jinja2
 import importlib
 
+from jinject.cli import _build_env_path_loader
+
 
 
 # --- Test Fixtures ---
@@ -154,3 +156,191 @@ def test_plugin_injection_and_fault_isolation(mock_entry_points):
     # VERIFICATION: Assert that the functional plugin operates predictably inside the engine context
     assert template.render() == "Value: 10", "The dynamically injected plugin yielded an incorrect return evaluation."
 
+
+
+# --- JINJECT_TEMPLATE_PATH Tests ---
+
+
+class TestBuildEnvPathLoader:
+    """Tests for _build_env_path_loader and JINJECT_TEMPLATE_PATH integration."""
+
+    def test_returns_none_when_env_var_unset(self, monkeypatch):
+        """No env var set → returns None."""
+        monkeypatch.delenv("JINJECT_TEMPLATE_PATH", raising=False)
+        assert _build_env_path_loader() is None
+
+    def test_returns_none_when_env_var_empty(self, monkeypatch):
+        """Empty string env var → returns None."""
+        monkeypatch.setenv("JINJECT_TEMPLATE_PATH", "")
+        assert _build_env_path_loader() is None
+
+    def test_explicit_namespace_mapping(self, tmp_path, monkeypatch):
+        """namespace=directory form registers the directory under that namespace."""
+        templates_dir = tmp_path / "my_templates"
+        templates_dir.mkdir()
+        (templates_dir / "model.sdf.jinja").write_text("hello from model")
+
+        monkeypatch.setenv("JINJECT_TEMPLATE_PATH", f"calibration={templates_dir}")
+
+        loader = _build_env_path_loader()
+        assert loader is not None
+
+        env = jinja2.Environment(loader=loader)
+        template = env.get_template("calibration/model.sdf.jinja")
+        assert template.render() == "hello from model"
+
+    def test_basename_namespace_inference(self, tmp_path, monkeypatch):
+        """Plain directory path uses its basename as namespace."""
+        ns_dir = tmp_path / "calibration_description"
+        ns_dir.mkdir()
+        (ns_dir / "velo2cam.sdf.jinja").write_text("velo2cam content")
+
+        monkeypatch.setenv("JINJECT_TEMPLATE_PATH", str(ns_dir))
+
+        loader = _build_env_path_loader()
+        assert loader is not None
+
+        env = jinja2.Environment(loader=loader)
+        template = env.get_template("calibration_description/velo2cam.sdf.jinja")
+        assert template.render() == "velo2cam content"
+
+    def test_multiple_entries(self, tmp_path, monkeypatch):
+        """Multiple colon-separated entries all become available."""
+        dir_a = tmp_path / "pkg_a"
+        dir_a.mkdir()
+        (dir_a / "a.jinja").write_text("from A")
+
+        dir_b = tmp_path / "pkg_b"
+        dir_b.mkdir()
+        (dir_b / "b.jinja").write_text("from B")
+
+        path_val = os.pathsep.join([str(dir_a), str(dir_b)])
+        monkeypatch.setenv("JINJECT_TEMPLATE_PATH", path_val)
+
+        loader = _build_env_path_loader()
+        env = jinja2.Environment(loader=loader)
+
+        assert env.get_template("pkg_a/a.jinja").render() == "from A"
+        assert env.get_template("pkg_b/b.jinja").render() == "from B"
+
+    def test_nonexistent_directory_skipped(self, tmp_path, monkeypatch):
+        """Non-existent directories are gracefully skipped."""
+        real_dir = tmp_path / "real"
+        real_dir.mkdir()
+        (real_dir / "t.jinja").write_text("ok")
+
+        fake_path = tmp_path / "does_not_exist"
+        path_val = os.pathsep.join([str(fake_path), str(real_dir)])
+        monkeypatch.setenv("JINJECT_TEMPLATE_PATH", path_val)
+
+        loader = _build_env_path_loader()
+        assert loader is not None
+
+        env = jinja2.Environment(loader=loader)
+        assert env.get_template("real/t.jinja").render() == "ok"
+
+    def test_all_entries_invalid_returns_none(self, tmp_path, monkeypatch):
+        """If all entries are non-existent dirs, returns None."""
+        monkeypatch.setenv("JINJECT_TEMPLATE_PATH", "/no/such/dir")
+        assert _build_env_path_loader() is None
+
+    def test_first_namespace_wins_on_duplicate(self, tmp_path, monkeypatch):
+        """When the same namespace appears multiple times, the first entry wins."""
+        dir1 = tmp_path / "first"
+        dir1.mkdir()
+        (dir1 / "x.jinja").write_text("first")
+
+        dir2 = tmp_path / "second"
+        dir2.mkdir()
+        (dir2 / "x.jinja").write_text("second")
+
+        path_val = os.pathsep.join([f"myns={dir1}", f"myns={dir2}"])
+        monkeypatch.setenv("JINJECT_TEMPLATE_PATH", path_val)
+
+        loader = _build_env_path_loader()
+        env = jinja2.Environment(loader=loader)
+        assert env.get_template("myns/x.jinja").render() == "first"
+
+    def test_env_path_takes_precedence_over_entry_points(self, tmp_path, monkeypatch):
+        """
+        JINJECT_TEMPLATE_PATH templates are resolved before PackageTemplateLoader,
+        verifying precedence when both could serve the same namespace.
+        """
+        # Set up a directory-based template
+        ns_dir = tmp_path / "shared_ns"
+        ns_dir.mkdir()
+        (ns_dir / "widget.jinja").write_text("env-path version")
+
+        monkeypatch.setenv("JINJECT_TEMPLATE_PATH", f"shared_ns={ns_dir}")
+
+        # Build the full loader chain as main() would
+        from jinject.cli import PackageTemplateLoader
+        env_loader = _build_env_path_loader()
+        loaders = [env_loader, PackageTemplateLoader()]
+
+        env = jinja2.Environment(loader=jinja2.ChoiceLoader(loaders))
+        # The env path version should win even if PackageTemplateLoader had the same namespace
+        template = env.get_template("shared_ns/widget.jinja")
+        assert template.render() == "env-path version"
+
+    def test_empty_entries_in_path_ignored(self, tmp_path, monkeypatch):
+        """Empty segments from leading/trailing/double separators are skipped."""
+        real_dir = tmp_path / "ns"
+        real_dir.mkdir()
+        (real_dir / "f.jinja").write_text("content")
+
+        path_val = f"{os.pathsep}{os.pathsep}{real_dir}{os.pathsep}"
+        monkeypatch.setenv("JINJECT_TEMPLATE_PATH", path_val)
+
+        loader = _build_env_path_loader()
+        assert loader is not None
+
+        env = jinja2.Environment(loader=loader)
+        assert env.get_template("ns/f.jinja").render() == "content"
+
+    def test_subdirectory_templates_accessible(self, tmp_path, monkeypatch):
+        """Templates in subdirectories within a namespace dir are accessible."""
+        ns_dir = tmp_path / "robot_desc"
+        sub = ns_dir / "urdf"
+        sub.mkdir(parents=True)
+        (sub / "arm.urdf.jinja").write_text("arm model")
+
+        monkeypatch.setenv("JINJECT_TEMPLATE_PATH", f"robot_desc={ns_dir}")
+
+        loader = _build_env_path_loader()
+        env = jinja2.Environment(loader=loader)
+        template = env.get_template("robot_desc/urdf/arm.urdf.jinja")
+        assert template.render() == "arm model"
+
+    def test_jinja_import_across_env_path_namespaces(self, tmp_path, monkeypatch):
+        """
+        End-to-end: a local template can import from an env-path namespace,
+        mimicking the CMake-installed template use case.
+        """
+        # "Installed" templates via env path
+        calib_dir = tmp_path / "calibration_description"
+        calib_dir.mkdir()
+        (calib_dir / "velo2cam.sdf.jinja").write_text(
+            "{% macro velo2cam_model(name) %}sensor:{{ name }}{% endmacro %}"
+        )
+
+        # Local template that imports from the namespace
+        local_dir = tmp_path / "local"
+        local_dir.mkdir()
+        (local_dir / "world.sdf.jinja").write_text(
+            '{% from "calibration_description/velo2cam.sdf.jinja" import velo2cam_model %}'
+            "{{ velo2cam_model('lidar_front') }}"
+        )
+
+        monkeypatch.setenv("JINJECT_TEMPLATE_PATH", f"calibration_description={calib_dir}")
+
+        env_loader = _build_env_path_loader()
+        env = jinja2.Environment(
+            loader=jinja2.ChoiceLoader([
+                jinja2.FileSystemLoader(str(local_dir)),
+                env_loader,
+            ])
+        )
+
+        template = env.get_template("world.sdf.jinja")
+        assert template.render() == "sensor:lidar_front"
