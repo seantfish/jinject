@@ -10,13 +10,13 @@ uv tool install ./jinject
 ```
 This works well for packages installed to your base global environment (such as via `apt`, `pip --break-system-packages`, or a sourced ROS 2 workspace).
 
-## Creating Jinjectable Packages
+## Creating Jinjectable Python Packages
 
 Packages can expose both templates and executable Python helper macros directly to the `jinject` processor via standard entry points.
 
 ### Registering template directories
 
-Templates must reside inside your Python package directory structure (e.g., src/my_asset_package/templates/) and added as a `"jinject.templates"` entry-point. Here is an example of a `pyproject.toml`:
+Registered templates must reside inside your Python package directory structure (e.g., src/my_asset_package/templates/) and added as a `"jinject.templates"` entry-point. Here is an example of a `pyproject.toml`:
 
 ```
 [project]
@@ -65,7 +65,10 @@ Map the python method path within the distribution `pyproject.toml` configuratio
 [project.entry-points."jinject.plugins"]
 get_meta = "my_asset_package.core:metadata_combiner"
 ```
-### Using functions in the template
+
+## Writing Templates
+
+### Python functions in the template
 
 `jinject` automatically wires `get_meta()` into the global execution block, making it instantly executable within layout templates:
 
@@ -75,11 +78,11 @@ get_meta = "my_asset_package.core:metadata_combiner"
 <div id="{{ layout_state.id_tag }}">Parity Event Status: {{ layout_state.is_even }}</div>
 ```
 
-## Shell Command Execution
+### Shell Command Execution in the template
 
 `jinject` provides built-in `shell()` and `shell_json()` functions available in all templates. These allow calling external command-line tools during template rendering — no entry points required.
 
-### `shell(*args, **kwargs)` → `str`
+#### `shell(*args, **kwargs)` → `str`
 
 Executes a command and returns its stdout as a stripped string. Raises on non-zero exit.
 
@@ -98,7 +101,7 @@ Positional arguments form the command tokens. Keyword arguments are appended as 
 {# Equivalent to: ros2 param get /node use_sim_time --verbose #}
 ```
 
-### `shell_json(*args, **kwargs)` → `dict | list | ...`
+#### `shell_json(*args, **kwargs)` → `dict | list | ...`
 
 Same calling convention as `shell()`, but parses stdout as JSON and returns the resulting Python object for structured access in templates.
 
@@ -117,7 +120,7 @@ These are intentionally loud failures — jinject is a build-time tool, and sile
 
 ## Template Discovery via Environment Variable
 
-For packages that cannot use Python entry points (e.g., CMake/Meson packages installing Jinja templates as static files), `jinject` supports the `JINJECT_TEMPLATE_PATH` environment variable as a first-class template discovery mechanism.
+For packages that cannot use Python entry points, `jinject` supports the `JINJECT_TEMPLATE_PATH` environment variable as a template discovery mechanism.
 
 ### Format
 
